@@ -1,0 +1,106 @@
+load("//cmake2bazel/bazel/rules:ts_program.bzl", "ts_program")
+load("//cmake2bazel/bazel/rules:esbuild_bundle.bzl", "esbuild_bundle")
+
+# All of node_modules/typescript as hermetic inputs for the tsc action.
+# tsc.js loads lots of sibling files at runtime; declaring the whole tree
+# keeps the action self-contained.
+filegroup(
+    name = "typescript",
+    srcs = glob(["node_modules/typescript/**"]),
+)
+
+# Everything under node_modules the compile needs: @types plus any package
+# whose module resolution or ambient d.ts is referenced from src. npm's build
+# runs against the full node_modules tree; matching that is simpler than
+# enumerating individual package labels. Excludes .bin symlinks (Bazel dislikes
+# unstable symlink targets) and the electron binary itself (large, unused by
+# tsc -- we only need the .d.ts).
+filegroup(
+    name = "type_deps",
+    srcs = glob(
+        ["node_modules/**"],
+        exclude = [
+            "node_modules/.bin/**",
+            "node_modules/electron/dist/**",
+        ],
+    ),
+)
+
+# Extension JSON assets that a handful of test files under src/vs/workbench/
+# import via relative paths (e.g. `extensions/theme-defaults/themes/*.json`).
+# tsc needs to see them to resolve those imports.
+filegroup(
+    name = "extension_json_assets",
+    srcs = glob(["extensions/theme-defaults/**/*.json"]),
+)
+
+# Whole-program TS compile of src/tsconfig.json -- parity target for
+# gulp-tsb's `compile-build-without-mangling`. Emits one out-build/ dir
+# containing .js + .js.map + .d.ts for every file in the tsconfig.
+# esbuild lives under build/node_modules (see build/package.json), not the
+# top-level tree; the runner script createRequires it from this location.
+filegroup(
+    name = "esbuild_package",
+    srcs = glob(["build/node_modules/esbuild/**"]),
+)
+
+# minimist is a top-level dep; the external-override plugin in
+# build/lib/optimize.ts pins it as internal so the bundle can use it at
+# startup without a conditional `await import()`.
+filegroup(
+    name = "minimist_package",
+    srcs = glob(["node_modules/minimist/**"]),
+)
+
+# tslib runtime -- inlined into the bundle banner so the TS emit helpers
+# (__extends, __assign, ...) appear ONCE at the top of the bundle instead
+# of once per source file (which contents-mapper strips).
+filegroup(
+    name = "tslib_package",
+    srcs = glob(["node_modules/tslib/**"]),
+)
+
+# source-map runtime -- the nls transform uses it to map from TS positions
+# (where localize() calls are analyzed) to their JS output positions.
+filegroup(
+    name = "source_map_package",
+    srcs = glob(["node_modules/source-map/**"]),
+)
+
+ts_program(
+    name = "core",
+    srcs = glob(
+        ["src/**"],
+        # The wrapper (run_ts_program.mjs) runs tsc on the .ts files and then
+        # copies every non-TS file under src/ into the out-build tree, so all
+        # of src/ needs to be staged in the sandbox.
+        exclude = [
+            # Test fixtures with non-ASCII paths trip Bazel 7.x's file
+            # loader (see https://github.com/bazelbuild/bazel/issues/374).
+            # None of these are referenced by the production build.
+            "src/vs/workbench/services/search/test/node/fixtures/**",
+        ],
+        allow_empty = False,
+    ) + [
+        ":extension_json_assets",
+        # `module: nodenext` in tsconfig.base.json walks up to find the
+        # nearest package.json to decide CJS vs ESM. Without the root
+        # package.json (which sets `"type": "module"`), tsc treats every
+        # .ts file as CJS -- breaks import.meta and JSON import attributes.
+        "package.json",
+    ],
+    tsconfig = "src/tsconfig.json",
+    typescript = ":typescript",
+    type_deps = [":type_deps"],
+)
+
+# First bundle target: the Electron main-process entrypoint (out-build/main.js).
+# Simplest of the 23 npm bundles -- 334 inputs, no vscode custom plugins that
+# add resolver behavior. If parity holds here, adding the workbench bundles
+# is just more targets.
+esbuild_bundle(
+    name = "main_bundle",
+    entry = "main.js",
+    out_name = "main",
+    deps = [":core"],
+)

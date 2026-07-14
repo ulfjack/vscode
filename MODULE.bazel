@@ -1,0 +1,9 @@
+"""Bazel workspace for parity-diffing vscode's npm build against a Bazel build.
+
+Deliberately minimal for now: one custom rule (ts_program) drives the whole-
+project TS compile; no external Bazel modules (rules_nodejs, rules_ts, etc.).
+Node is resolved from the host PATH via use_default_shell_env because the sandbox
+already has `nodejs` installed for the npm-side instrumentation runs.
+"""
+
+module(name = "vscode", version = "0.0.0")
