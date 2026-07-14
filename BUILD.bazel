@@ -1,5 +1,11 @@
 load("//cmake2bazel/bazel/rules:ts_program.bzl", "ts_program")
-load("//cmake2bazel/bazel/rules:esbuild_bundle.bzl", "esbuild_bundle")
+load(
+    "//cmake2bazel/bazel/rules:esbuild_bundle.bzl",
+    "bundle_target_name",
+    "esbuild_bundle",
+)
+load("//cmake2bazel/bazel/rules:vscode_app.bzl", "vscode_app")
+load("//cmake2bazel/bazel/rules:nodegyp_module.bzl", "nodegyp_module")
 
 # All of node_modules/typescript as hermetic inputs for the tsc action.
 # tsc.js loads lots of sibling files at runtime; declaring the whole tree
@@ -94,13 +100,181 @@ ts_program(
     type_deps = [":type_deps"],
 )
 
-# First bundle target: the Electron main-process entrypoint (out-build/main.js).
-# Simplest of the 23 npm bundles -- 334 inputs, no vscode custom plugins that
-# add resolver behavior. If parity holds here, adding the workbench bundles
-# is just more targets.
-esbuild_bundle(
-    name = "main_bundle",
-    entry = "main.js",
-    out_name = "main",
+# The 23 core bundles bundle-vscode produces (see build/gulpfile.vscode.ts:
+# `vscodeEntryPoints` + `bootstrapEntryPoints`, expanded via
+# build/buildfile.ts). Each is one esbuild.build() call against `//:core`'s
+# out-build directory, produced under `bazel-bin/bundle_<sanitized>/`.
+#
+# Two of the 23 (the electron-browser workbench/sessions loaders) skip
+# TS-boilerplate removal because they re-export shared boilerplate that
+# other bundles import -- matches optimize.bundleTask's callback.
+_CORE_BUNDLES = [
+    # (entry point path relative to out-build/, without .js extension)
+    "vs/editor/common/services/editorWebWorkerMain",
+    "vs/workbench/api/worker/extensionHostWorkerMain",
+    "vs/workbench/contrib/notebook/common/services/notebookWebWorkerMain",
+    "vs/workbench/services/languageDetection/browser/languageDetectionWebWorkerMain",
+    "vs/workbench/services/search/worker/localFileSearchMain",
+    "vs/platform/profiling/electron-browser/profileAnalysisWorkerMain",
+    "vs/workbench/contrib/output/common/outputLinkComputerMain",
+    "vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.workerMain",
+    "vs/workbench/contrib/debug/node/telemetryApp",
+    "vs/platform/files/node/watcher/watcherMain",
+    "vs/platform/terminal/node/ptyHostMain",
+    "vs/platform/agentHost/node/agentHostMain",
+    "vs/platform/agentHost/node/diffWorkerMain",
+    "vs/workbench/api/node/extensionHostProcess",
+    "vs/workbench/workbench.desktop.main",
+    "vs/sessions/sessions.desktop.main",
+    "vs/code/node/cliProcessMain",
+    "vs/code/electron-utility/sharedProcess/sharedProcessMain",
+    "vs/code/electron-browser/workbench/workbench",
+    "vs/sessions/electron-browser/sessions",
+    "main",
+    "cli",
+    "bootstrap-fork",
+]
+
+_SKIP_BOILERPLATE = {
+    "vs/code/electron-browser/workbench/workbench": True,
+    "vs/sessions/electron-browser/sessions": True,
+}
+
+[esbuild_bundle(
+    name = bundle_target_name(entry),
+    entry = entry + ".js",
+    out_name = entry,
     deps = [":core"],
+    skip_ts_boilerplate_removal = _SKIP_BOILERPLATE.get(entry, False),
+) for entry in _CORE_BUNDLES]
+
+# Convenience: build all 23 in one command via `bazel build //:bundles`.
+filegroup(
+    name = "bundles",
+    srcs = [":" + bundle_target_name(e) for e in _CORE_BUNDLES],
+)
+
+# Assemble a runnable vscode app tree at `bazel-bin/vscode_app/`.
+# Downstream launcher wraps this with electron + product.json + package.json.
+vscode_app(
+    name = "vscode_app",
+    core = ":core",
+    bundles = [":" + bundle_target_name(e) for e in _CORE_BUNDLES],
+    product_json = "product.json",
+    package_json = "package.json",
+)
+
+# Native modules -- one nodegyp_module per package that vscode's npm-ci
+# postinstall rebuilds against Electron's ABI. `npm ci` populated
+# node_modules/ with JS + binding.gyp; we drive node-gyp to produce the .node
+# binaries the runtime require()s.
+# All native (`binding.gyp`) modules that vscode's Linux runtime loads.
+# Enumerated by scanning `find node_modules -maxdepth 4 -name binding.gyp` and
+# filtering out Windows-only ones (@vscode/deviceid, @vscode/windows-*,
+# windows-foreground-love) whose targets are gated on OS=="win". bufferutil /
+# utf-8-validate ship linux-x64 prebuilds so vscode never triggers a rebuild;
+# we don't include them here for the same reason.
+#
+# Tuple: (bazel_target, module_root_dir, binding_relpath, dest under app/node_modules)
+_NATIVE_MODULES = [
+    (
+        "vscode_sqlite3",
+        "node_modules/@vscode/sqlite3",
+        "build/Release/vscode-sqlite3.node",
+        "@vscode/sqlite3/build/Release/vscode-sqlite3.node",
+    ),
+    (
+        "vscode_spdlog",
+        "node_modules/@vscode/spdlog",
+        "build/Release/spdlog.node",
+        "@vscode/spdlog/build/Release/spdlog.node",
+    ),
+    (
+        "vscode_policy_watcher",
+        "node_modules/@vscode/policy-watcher",
+        "build/Release/vscode-policy-watcher.node",
+        "@vscode/policy-watcher/build/Release/vscode-policy-watcher.node",
+    ),
+    (
+        "vscode_native_watchdog",
+        "node_modules/@vscode/native-watchdog",
+        "build/Release/watchdog.node",
+        "@vscode/native-watchdog/build/Release/watchdog.node",
+    ),
+    (
+        "node_pty",
+        "node_modules/node-pty",
+        "build/Release/pty.node",
+        "node-pty/build/Release/pty.node",
+    ),
+    (
+        "native_keymap",
+        "node_modules/native-keymap",
+        "build/Release/keymapping.node",
+        "native-keymap/build/Release/keymapping.node",
+    ),
+    (
+        "native_is_elevated",
+        "node_modules/native-is-elevated",
+        "build/Release/iselevated.node",
+        "native-is-elevated/build/Release/iselevated.node",
+    ),
+    (
+        "kerberos",
+        "node_modules/kerberos",
+        "build/Release/kerberos.node",
+        "kerberos/build/Release/kerberos.node",
+    ),
+    (
+        "parcel_watcher",
+        "node_modules/@parcel/watcher",
+        "build/Release/watcher.node",
+        "@parcel/watcher/build/Release/watcher.node",
+    ),
+]
+
+# Extra npm deps some native modules' binding.gyp scripts require at
+# BUILD time (not runtime): sqlite3's deps/extract.js pulls in `tar` +
+# `node-addon-api`; node-pty's binding.gyp uses `nan`. Include them so
+# their `node_modules/<pkg>/**` layout is preserved in the sandbox.
+_NATIVE_MODULE_EXTRA_DEPS = {
+    # sqlite3's `deps/extract.js` (invoked by binding.gyp's action) does
+    # `require('tar')`. `node-addon-api` is nested under
+    # `@vscode/sqlite3/node_modules/` (v8) so we DON'T include the repo-root
+    # v6 copy which would overwrite it.
+    "vscode_sqlite3": ["node_modules/tar/**"],
+    "node_pty": ["node_modules/nan/**"],
+    # kerberos' binding.gyp uses `<!@(node -p "require('node-addon-api').include")`
+    # + prebuild-install's postinstall wants `bindings`. Both are top-level.
+    "kerberos": ["node_modules/bindings/**"],
+}
+
+[nodegyp_module(
+    name = m[0],
+    srcs = glob(
+        [m[1] + "/**"] + _NATIVE_MODULE_EXTRA_DEPS.get(m[0], []),
+        # Skip any pre-existing build/ output from a previous local
+        # `npm ci`; node-gyp will re-populate it inside the sandbox.
+        exclude = [m[1] + "/build/**"],
+        allow_empty = True,
+    ),
+    module_root = m[1],
+    binding = m[2],
+    headers = "@electron_headers//:all",
+    electron_target = "42.2.0",
+) for m in _NATIVE_MODULES]
+
+filegroup(
+    name = "native_modules",
+    srcs = [":" + m[0] for m in _NATIVE_MODULES],
+)
+
+# Launcher: `bazel run //:vscode` boots Electron on the assembled app tree.
+sh_binary(
+    name = "vscode",
+    srcs = ["//cmake2bazel/bazel/tools:launch-vscode.sh"],
+    data = [
+        ":vscode_app",
+        "@electron_linux_x64//:all",
+    ],
 )
