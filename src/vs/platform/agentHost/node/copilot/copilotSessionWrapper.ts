@@ -16,7 +16,7 @@ export class CopilotSessionWrapper extends Disposable {
 
 	private readonly _handledEventTypes = new Set<SessionEventType>();
 	private readonly _onUnhandledEvent = this._register(new Emitter<SessionEvent>());
-	readonly onUnhandledEvent = this._onUnhandledEvent.event;
+	readonly onUnhandledEvent: Event<SessionEvent> = this._onUnhandledEvent.event;
 
 	constructor(readonly session: CopilotSession) {
 		super();
