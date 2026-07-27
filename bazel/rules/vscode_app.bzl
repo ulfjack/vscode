@@ -100,7 +100,7 @@ vscode_app = rule(
                   "`./main.js` (bundled main sits at root, not under out/).",
         ),
         "_assembler": attr.label(
-            default = "//cmake2bazel/bazel/tools:assemble_vscode_dir.mjs",
+            default = "//bazel/tools:assemble_vscode_dir.mjs",
             allow_single_file = True,
         ),
     },

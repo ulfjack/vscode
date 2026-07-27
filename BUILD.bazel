@@ -1,11 +1,11 @@
-load("//cmake2bazel/bazel/rules:ts_program.bzl", "ts_program")
+load("//bazel/rules:ts_program.bzl", "ts_program")
 load(
-    "//cmake2bazel/bazel/rules:esbuild_bundle.bzl",
+    "//bazel/rules:esbuild_bundle.bzl",
     "bundle_target_name",
     "esbuild_bundle",
 )
-load("//cmake2bazel/bazel/rules:vscode_app.bzl", "vscode_app")
-load("//cmake2bazel/bazel/rules:nodegyp_module.bzl", "nodegyp_module")
+load("//bazel/rules:vscode_app.bzl", "vscode_app")
+load("//bazel/rules:nodegyp_module.bzl", "nodegyp_module")
 
 # All of node_modules/typescript as hermetic inputs for the tsc action.
 # tsc.js loads lots of sibling files at runtime; declaring the whole tree
@@ -272,7 +272,7 @@ filegroup(
 # Launcher: `bazel run //:vscode` boots Electron on the assembled app tree.
 sh_binary(
     name = "vscode",
-    srcs = ["//cmake2bazel/bazel/tools:launch-vscode.sh"],
+    srcs = ["//bazel/tools:launch-vscode.sh"],
     data = [
         ":vscode_app",
         "@electron_linux_x64//:all",

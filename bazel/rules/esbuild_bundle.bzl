@@ -180,7 +180,7 @@ esbuild_bundle = rule(
                   "that re-emit shared boilerplate.",
         ),
         "_runner": attr.label(
-            default = "//cmake2bazel/bazel/tools:run_esbuild.mjs",
+            default = "//bazel/tools:run_esbuild.mjs",
             allow_single_file = True,
         ),
         "_esbuild": attr.label(default = "//:esbuild_package"),

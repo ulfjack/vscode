@@ -84,7 +84,7 @@ nodegyp_module = rule(
             mandatory = True,
         ),
         "_runner": attr.label(
-            default = "//cmake2bazel/bazel/tools:run_nodegyp.mjs",
+            default = "//bazel/tools:run_nodegyp.mjs",
             allow_single_file = True,
         ),
     },

@@ -96,7 +96,7 @@ ts_program = rule(
                   "emitted output -- matches gulp's asset copy.",
         ),
         "_wrapper": attr.label(
-            default = "//cmake2bazel/bazel/tools:run_ts_program.mjs",
+            default = "//bazel/tools:run_ts_program.mjs",
             allow_single_file = True,
         ),
         "nls": attr.string(
@@ -108,7 +108,7 @@ ts_program = rule(
                   "byte parity of downstream bundles.",
         ),
         "_nls_transform": attr.label(
-            default = "//cmake2bazel/bazel/tools:nls_transform.mjs",
+            default = "//bazel/tools:nls_transform.mjs",
             allow_single_file = True,
         ),
         "_source_map": attr.label(default = "//:source_map_package"),
