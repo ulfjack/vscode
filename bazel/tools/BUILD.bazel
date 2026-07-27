@@ -1,0 +1,8 @@
+exports_files([
+    "run_esbuild.mjs",
+    "run_ts_program.mjs",
+    "nls_transform.mjs",
+    "assemble_vscode_dir.mjs",
+    "launch-vscode.sh",
+    "run_nodegyp.mjs",
+])
